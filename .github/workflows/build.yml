@@ -1,0 +1,87 @@
+name: build
+
+# Block's buzz-sprig on our tailscale image. Builds on push and on demand, and
+# daily when Block's main or our tailscale:latest has moved.
+on:
+  push:
+    branches: [master]
+    paths-ignore: ["**.md"]
+  schedule:
+    - cron: "43 5 * * *"
+  workflow_dispatch:
+    inputs:
+      sprig:
+        description: Block tag, e.g. sha-8af2d91 (empty = main)
+        required: false
+      tailscale:
+        description: Our tailscale tag, e.g. v1.102.5 (empty = our latest)
+        required: false
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: build-${{ github.event_name }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      IMAGE: ghcr.io/${{ github.repository }}
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Resolve versions
+        id: v
+        env:
+          SPRIG: ${{ inputs.sprig }}
+          TAILSCALE: ${{ inputs.tailscale }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          label() {
+            docker buildx imagetools inspect "$1" --format '{{json .Image}}' \
+              | jq -er --arg k "$2" '."linux/amd64".config.Labels[$k]'
+          }
+          sprig="${SPRIG:-sha-$(label ghcr.io/block/buzz-sprig:main org.opencontainers.image.revision | cut -c1-7)}"
+          tailscale="${TAILSCALE:-$(label "ghcr.io/$OWNER/tailscale:latest" org.opencontainers.image.version)}"
+          [[ "$sprig" =~ ^sha-[0-9a-f]{7}$ && "$tailscale" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          base="ghcr.io/$OWNER/tailscale:$tailscale"
+          tags="$IMAGE:$sprig"
+          [ -z "$SPRIG$TAILSCALE" ] && tags="$tags,$IMAGE:latest"
+          # The tag only carries the sprig version; the tailscale base and this
+          # repo's commit are recorded in labels, so either changing rebuilds.
+          build=true
+          if [ "$GITHUB_EVENT_NAME" = schedule ] \
+            && [ "$(label "$IMAGE:$sprig" org.opencontainers.image.base.name 2>/dev/null)" = "$base" ] \
+            && [ "$(label "$IMAGE:$sprig" org.opencontainers.image.revision 2>/dev/null)" = "$GITHUB_SHA" ]; then
+            build=false
+            echo "$IMAGE:$sprig already published on $base"
+          fi
+          { echo "sprig=$sprig"; echo "tailscale=$tailscale"; echo "base=$base"
+            echo "tags=$tags"; echo "build=$build"; } >>"$GITHUB_OUTPUT"
+
+      - if: steps.v.outputs.build == 'true'
+        uses: docker/setup-qemu-action@v3
+      - if: steps.v.outputs.build == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - if: steps.v.outputs.build == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            SPRIG_VERSION=${{ steps.v.outputs.sprig }}
+            TAILSCALE_VERSION=${{ steps.v.outputs.tailscale }}
+          tags: ${{ steps.v.outputs.tags }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.v.outputs.sprig }}
+            org.opencontainers.image.base.name=${{ steps.v.outputs.base }}
+          push: true
