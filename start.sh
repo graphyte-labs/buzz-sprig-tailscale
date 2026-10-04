@@ -1,6 +1,6 @@
 #!/bin/sh
 # Joins the tailnet with containerboot, forwards the relay host to localhost:443,
-# then runs buzz-acp. Root only prepares TS_STATE_DIR, writes /etc/hosts and binds :443.
+# then runs buzz-acp. Root prepares TS_STATE_DIR, writes /etc/hosts and binds :443.
 set -eu
 
 export TS_USERSPACE=true \
@@ -9,7 +9,10 @@ export TS_USERSPACE=true \
 ts="tailscale --socket=$TS_SOCKET"
 
 # Volumes are mounted root-owned, but tailscaled runs as agent.
-[ -n "${TS_STATE_DIR:-}" ] && install -d -o agent -g agent "$TS_STATE_DIR" && chown agent:agent "$TS_STATE_DIR"
+if [ -n "${TS_STATE_DIR:-}" ]; then
+  install -d -o agent -g agent "$TS_STATE_DIR"
+  chown agent:agent "$TS_STATE_DIR"
+fi
 
 # containerboot exits when tailscaled stops running; take the container with it.
 (su-exec agent containerboot; kill -TERM 1) &
@@ -20,16 +23,25 @@ done
 
 # Workaround: buzz-acp's relay WebSocket ignores proxies, and the relay only
 # accepts its own hostname on 443 (community lookup, TLS, signed auth URL). So
-# point that hostname at localhost:443 and pipe it through the tailnet with
-# `tailscale nc`. Remove once buzz-acp honours HTTPS_PROXY for the WebSocket.
+# point that hostname at localhost:443 and pipe it to the relay's Service IP with
+# `tailscale nc`. Dial the IP, not the name: tailscaled falls back to /etc/hosts
+# for names, which would send the tunnel back into itself.
 relay="${BUZZ_RELAY_URL:-}"; relay="${relay#*://}"; relay="${relay%%[:/]*}"
 if [ -n "$relay" ]; then
-  echo "127.0.0.1 $relay" >>/etc/hosts
-  socat TCP-LISTEN:443,bind=127.0.0.1,reuseaddr,fork,su=agent EXEC:"$ts nc $relay 443" &
+  vip="$(su-exec agent $ts dns query --json "$relay" A | jq -er 'select(.ResponseCode == "RCodeSuccess") | [.Answers[]? | select(.Type == "TypeA") | .Body] | .[0] // empty')" || {
+    printf 'failed to resolve Buzz relay Service IP: %s\n' "$relay" >&2
+    exit 1
+  }
+  grep -q " $relay\$" /etc/hosts || echo "127.0.0.1 $relay" >>/etc/hosts
+  socat TCP-LISTEN:443,bind=127.0.0.1,reuseaddr,fork,su=agent EXEC:"$ts nc $vip 443" &
 fi
 
+# The relay goes direct (NO_PROXY), so its REST calls use the same tunnel.
 proxy="http://$TS_OUTBOUND_HTTP_PROXY_LISTEN"
-no_proxy="${NO_PROXY:-localhost,127.0.0.0/8}"
+no_proxy="${NO_PROXY:-localhost,127.0.0.0/8}${relay:+,$relay}"
 export HTTPS_PROXY="$proxy" HTTP_PROXY="$proxy" NO_PROXY="$no_proxy" \
   https_proxy="$proxy" http_proxy="$proxy" no_proxy="$no_proxy"
+
+# Only needed for the first login; keep it away from the agent's shell.
+unset TS_AUTHKEY TS_AUTH_KEY
 exec su-exec agent buzz-acp "$@"

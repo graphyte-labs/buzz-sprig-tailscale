@@ -12,13 +12,15 @@ Tags follow Block's sprig commit. The image is rebuilt in place when a new Tails
 ## How it works
 
 1. Joins the tailnet with `containerboot` as user `agent`, in userspace mode. If tailscaled stops, the container exits.
-2. Points the host in `BUZZ_RELAY_URL` at `localhost:443`, tunnelled with `tailscale nc`. The relay WebSocket ignores proxies, so this is how it reaches the relay.
-3. Exports `HTTPS_PROXY` and `HTTP_PROXY` (tailscaled's outbound proxy) for everything else, e.g. the AI gateway.
-4. Runs `buzz-acp` as `agent`. Root is only used to write `/etc/hosts`, bind port 443, and hand `TS_STATE_DIR` to `agent` (volumes are mounted root-owned).
+2. Resolves the host in `BUZZ_RELAY_URL` to its Service IP through tailscaled, points that host at `127.0.0.1` in `/etc/hosts`, and runs `socat` on localhost:443 piping to `tailscale nc <Service IP> 443`. The agent keeps the original hostname for TLS and signed authentication.
+3. Exports `HTTPS_PROXY` and `HTTP_PROXY` (tailscaled's outbound proxy) for everything else, e.g. the AI gateway. The relay host goes in `NO_PROXY`, so Buzz's REST calls use the same tunnel as its WebSocket.
+4. Unsets `TS_AUTHKEY` and runs `buzz-acp` as `agent`. Root only prepares `TS_STATE_DIR` (volumes are mounted root-owned), writes `/etc/hosts` and binds port 443.
 
 ## Why the relay workaround
 
-Step 2 exists because `buzz-acp` opens its relay WebSocket directly and ignores `HTTPS_PROXY`. In userspace mode only tailscaled can reach the tailnet, and the relay must be reached by its own hostname on port 443, since it picks the community from the host and checks it against the TLS certificate and the signed auth URL.
+`buzz-acp` opens its relay WebSocket directly and ignores `HTTPS_PROXY`. In userspace mode only tailscaled can reach the tailnet, and the relay must be reached by its own hostname on port 443, since it picks the community from the host and checks it against the TLS certificate and the signed auth URL.
+
+The tunnel dials the Service IP, not the hostname: for names, tailscaled falls back to the container's `/etc/hosts`, which resolves the relay to `127.0.0.1` and loops the tunnel back into itself.
 
 Alternatives considered: kernel-mode Tailscale (needs `NET_ADMIN` and a TUN device), `proxychains` (sprig is a static binary), and polling with `buzz-cli`, whose REST calls do use the proxy but lose push delivery and the harness. Once `buzz-acp` honours the proxy for its WebSocket, step 2 and the root step go away.
 

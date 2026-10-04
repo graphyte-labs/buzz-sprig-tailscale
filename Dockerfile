@@ -8,8 +8,8 @@ FROM ghcr.io/block/buzz-sprig:${SPRIG_VERSION} AS sprig
 
 FROM ghcr.io/graphyte-labs/tailscale:${TAILSCALE_VERSION}
 
-# bash: buzz-dev-mcp shell; git, curl: agent tooling; socat, su-exec: start.sh.
-RUN apk add --no-cache bash curl git socat su-exec \
+# bash: buzz-dev-mcp shell; git, curl: agent tooling; jq, socat, su-exec: start.sh.
+RUN apk add --no-cache bash curl git jq socat su-exec \
     && adduser -D -h /home/agent agent
 
 COPY --link --from=sprig /usr/local/bin/ /usr/local/bin/
