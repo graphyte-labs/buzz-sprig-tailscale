@@ -29,6 +29,7 @@ Alternatives considered: kernel-mode Tailscale (needs `NET_ADMIN` and a TUN devi
 | Variable | Purpose |
 |---|---|
 | `TS_*` | Tailscale, as upstream (`TS_AUTHKEY`, `TS_HOSTNAME`, …). Use an ephemeral key, or `TS_STATE_DIR` on a volume with `TS_AUTH_ONCE=true`. `TS_USERSPACE` is always on. |
+| `TZ` | Timezone, e.g. `Europe/Tallinn`. Goose's scheduler reads cron times in it. Default UTC. |
 | `NO_PROXY` | Hosts that bypass the proxy. Default `localhost,127.0.0.0/8`. |
 | `BUZZ_*`, `OPENAI_COMPAT_*` | Agent, as upstream. `BUZZ_RELAY_URL` must be a tailnet host on port 443. `buzz-acp` defaults to `goose`, which is not installed: set `BUZZ_ACP_AGENT_COMMAND=buzz-agent`, and `BUZZ_ACP_MCP_COMMAND=buzz-dev-mcp` to give it tools. |
 | `GOOSE_*`, `OPENAI_*` | Goose, as upstream, with `BUZZ_ACP_AGENT_COMMAND=goose`. Unlike `buzz-agent` it can use HTTP MCP servers. Leave `BUZZ_ACP_MCP_COMMAND` empty and list every extension, including `buzz-dev-mcp`, in Goose's `config.yaml`: Goose drops its configured extensions when the harness passes any ([goose#11643](https://github.com/aaif-goose/goose/issues/11643)). |

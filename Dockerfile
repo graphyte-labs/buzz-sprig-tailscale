@@ -11,8 +11,9 @@ FROM ghcr.io/graphyte-labs/tailscale:${TAILSCALE_VERSION}
 ARG GOOSE_VERSION
 ARG TARGETARCH
 
-# bash: buzz-dev-mcp shell; git, curl: agent tooling; jq, socat, su-exec: start.sh.
-RUN apk add --no-cache bash curl git jq socat su-exec \
+# bash: buzz-dev-mcp shell; git, curl: agent tooling; jq, socat, su-exec: start.sh;
+# tzdata: TZ, so scheduled jobs run in local time.
+RUN apk add --no-cache bash curl git jq socat su-exec tzdata \
     && adduser -D -h /home/agent agent
 
 # Goose, as an alternative to buzz-agent: it speaks MCP over HTTP, which
