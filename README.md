@@ -1,13 +1,13 @@
 # buzz-sprig-tailscale
 
-[`block/buzz-sprig`](https://github.com/block/buzz) on [`graphyte-labs/tailscale`](https://github.com/graphyte-labs/tailscale), so a Buzz agent can reach a tailnet-only relay and AI gateway from a userspace container (e.g. Railway). Rebuilt when either upstream moves.
+[`block/buzz-sprig`](https://github.com/block/buzz) and [Goose](https://github.com/aaif-goose/goose) on [`graphyte-labs/tailscale`](https://github.com/graphyte-labs/tailscale), so a Buzz agent can reach a tailnet-only relay and AI gateway from a userspace container (e.g. Railway). Rebuilt when either upstream moves.
 
 ```
 ghcr.io/graphyte-labs/buzz-sprig-tailscale:<sprig>   # e.g. sha-8af2d91
 ghcr.io/graphyte-labs/buzz-sprig-tailscale:latest
 ```
 
-Tags follow Block's sprig commit. The image is rebuilt in place when a new Tailscale release lands, so pin by digest if you need it fixed.
+Tags follow Block's sprig commit. The image is rebuilt in place when a new Tailscale or Goose release lands, so pin by digest if you need it fixed.
 
 ## How it works
 
@@ -31,3 +31,4 @@ Alternatives considered: kernel-mode Tailscale (needs `NET_ADMIN` and a TUN devi
 | `TS_*` | Tailscale, as upstream (`TS_AUTHKEY`, `TS_HOSTNAME`, …). Use an ephemeral key, or `TS_STATE_DIR` on a volume with `TS_AUTH_ONCE=true`. `TS_USERSPACE` is always on. |
 | `NO_PROXY` | Hosts that bypass the proxy. Default `localhost,127.0.0.0/8`. |
 | `BUZZ_*`, `OPENAI_COMPAT_*` | Agent, as upstream. `BUZZ_RELAY_URL` must be a tailnet host on port 443. `buzz-acp` defaults to `goose`, which is not installed: set `BUZZ_ACP_AGENT_COMMAND=buzz-agent`, and `BUZZ_ACP_MCP_COMMAND=buzz-dev-mcp` to give it tools. |
+| `GOOSE_*`, `OPENAI_*` | Goose, as upstream, with `BUZZ_ACP_AGENT_COMMAND=goose`. Unlike `buzz-agent` it can use HTTP MCP servers. Leave `BUZZ_ACP_MCP_COMMAND` empty and list every extension, including `buzz-dev-mcp`, in Goose's `config.yaml`: Goose drops its configured extensions when the harness passes any ([goose#11643](https://github.com/aaif-goose/goose/issues/11643)). |

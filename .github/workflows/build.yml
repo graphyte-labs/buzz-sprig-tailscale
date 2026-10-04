@@ -16,6 +16,9 @@ on:
       tailscale:
         description: Our tailscale tag, e.g. v1.102.5 (empty = our latest)
         required: false
+      goose:
+        description: Goose release, e.g. v1.53.0 (empty = latest)
+        required: false
 
 permissions:
   contents: read
@@ -41,6 +44,8 @@ jobs:
         env:
           SPRIG: ${{ inputs.sprig }}
           TAILSCALE: ${{ inputs.tailscale }}
+          GOOSE: ${{ inputs.goose }}
+          GH_TOKEN: ${{ github.token }}
           OWNER: ${{ github.repository_owner }}
         run: |
           set -euo pipefail
@@ -50,20 +55,22 @@ jobs:
           }
           sprig="${SPRIG:-sha-$(label ghcr.io/block/buzz-sprig:main org.opencontainers.image.revision | cut -c1-7)}"
           tailscale="${TAILSCALE:-$(label "ghcr.io/$OWNER/tailscale:latest" org.opencontainers.image.version)}"
-          [[ "$sprig" =~ ^sha-[0-9a-f]{7}$ && "$tailscale" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          goose="${GOOSE:-$(gh release view -R aaif-goose/goose --json tagName -q .tagName)}"
+          [[ "$sprig" =~ ^sha-[0-9a-f]{7}$ && "$tailscale" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ && "$goose" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
           base="ghcr.io/$OWNER/tailscale:$tailscale"
           tags="$IMAGE:$sprig"
-          [ -z "$SPRIG$TAILSCALE" ] && tags="$tags,$IMAGE:latest"
-          # The tag only carries the sprig version; the tailscale base and this
-          # repo's commit are recorded in labels, so either changing rebuilds.
+          [ -z "$SPRIG$TAILSCALE$GOOSE" ] && tags="$tags,$IMAGE:latest"
+          # The tag only carries the sprig version; the tailscale base, Goose and
+          # this repo's commit are recorded in labels, so any of them changing rebuilds.
           build=true
           if [ "$GITHUB_EVENT_NAME" = schedule ] \
             && [ "$(label "$IMAGE:$sprig" org.opencontainers.image.base.name 2>/dev/null)" = "$base" ] \
-            && [ "$(label "$IMAGE:$sprig" org.opencontainers.image.revision 2>/dev/null)" = "$GITHUB_SHA" ]; then
+            && [ "$(label "$IMAGE:$sprig" org.opencontainers.image.revision 2>/dev/null)" = "$GITHUB_SHA" ] \
+            && [ "$(label "$IMAGE:$sprig" io.github.aaif-goose.version 2>/dev/null)" = "$goose" ]; then
             build=false
             echo "$IMAGE:$sprig already published on $base"
           fi
-          { echo "sprig=$sprig"; echo "tailscale=$tailscale"; echo "base=$base"
+          { echo "sprig=$sprig"; echo "tailscale=$tailscale"; echo "goose=$goose"; echo "base=$base"
             echo "tags=$tags"; echo "build=$build"; } >>"$GITHUB_OUTPUT"
 
       - if: steps.v.outputs.build == 'true'
@@ -78,10 +85,12 @@ jobs:
           build-args: |
             SPRIG_VERSION=${{ steps.v.outputs.sprig }}
             TAILSCALE_VERSION=${{ steps.v.outputs.tailscale }}
+            GOOSE_VERSION=${{ steps.v.outputs.goose }}
           tags: ${{ steps.v.outputs.tags }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ steps.v.outputs.sprig }}
             org.opencontainers.image.base.name=${{ steps.v.outputs.base }}
+            io.github.aaif-goose.version=${{ steps.v.outputs.goose }}
           push: true
