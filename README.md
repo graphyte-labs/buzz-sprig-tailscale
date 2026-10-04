@@ -14,7 +14,7 @@ Tags follow Block's sprig commit. The image is rebuilt in place when a new Tails
 1. Joins the tailnet with `containerboot` as user `agent`, in userspace mode. If tailscaled stops, the container exits.
 2. Points the host in `BUZZ_RELAY_URL` at `localhost:443`, tunnelled with `tailscale nc`. The relay WebSocket ignores proxies, so this is how it reaches the relay.
 3. Exports `HTTPS_PROXY` and `HTTP_PROXY` (tailscaled's outbound proxy) for everything else, e.g. the AI gateway.
-4. Runs `buzz-acp` as `agent`. Root is only used to write `/etc/hosts` and bind port 443.
+4. Runs `buzz-acp` as `agent`. Root is only used to write `/etc/hosts`, bind port 443, and hand `TS_STATE_DIR` to `agent` (volumes are mounted root-owned).
 
 ## Why the relay workaround
 

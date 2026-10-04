@@ -1,12 +1,15 @@
 #!/bin/sh
 # Joins the tailnet with containerboot, forwards the relay host to localhost:443,
-# then runs buzz-acp. Root only writes /etc/hosts and binds :443.
+# then runs buzz-acp. Root only prepares TS_STATE_DIR, writes /etc/hosts and binds :443.
 set -eu
 
 export TS_USERSPACE=true \
   TS_SOCKET="${TS_SOCKET:-/tmp/tailscaled.sock}" \
   TS_OUTBOUND_HTTP_PROXY_LISTEN="${TS_OUTBOUND_HTTP_PROXY_LISTEN:-127.0.0.1:1055}"
 ts="tailscale --socket=$TS_SOCKET"
+
+# Volumes are mounted root-owned, but tailscaled runs as agent.
+[ -n "${TS_STATE_DIR:-}" ] && install -d -o agent -g agent "$TS_STATE_DIR" && chown agent:agent "$TS_STATE_DIR"
 
 # containerboot exits when tailscaled stops running; take the container with it.
 (su-exec agent containerboot; kill -TERM 1) &
