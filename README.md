@@ -1,35 +1,63 @@
 # buzz-sprig-tailscale
 
-[`block/buzz-sprig`](https://github.com/block/buzz) and [Goose](https://github.com/aaif-goose/goose) on [`graphyte-labs/tailscale`](https://github.com/graphyte-labs/tailscale), so a Buzz agent can reach a tailnet-only relay and AI gateway from a userspace container (e.g. Railway). Rebuilt when either upstream moves.
+Block's [`buzz-sprig`](https://github.com/block/buzz) and [Goose](https://github.com/aaif-goose/goose) on [`graphyte-labs/tailscale`](https://github.com/graphyte-labs/tailscale), for running a Buzz agent in a userspace container (e.g. Railway) when the Buzz relay and the AI gateway are only reachable over the tailnet.
 
 ```
 ghcr.io/graphyte-labs/buzz-sprig-tailscale:<sprig>   # e.g. sha-8af2d91
 ghcr.io/graphyte-labs/buzz-sprig-tailscale:latest
 ```
 
-Tags follow Block's sprig commit. The image is rebuilt in place when a new Tailscale or Goose release lands, so pin by digest if you need it fixed.
+Contains `buzz-acp`, `buzz-agent`, `buzz-dev-mcp` and `buzz` from sprig, plus `goose`. The tag is Block's sprig commit and `latest` follows Block's `main`. A tag is rebuilt in place when our Tailscale image or Goose has a new release (labels `org.opencontainers.image.base.name` and `io.github.aaif-goose.version`), so pin by digest. Goose downloads are checked against their GitHub build attestation.
+
+## Running with Goose
+
+```sh
+docker run -d -v agent:/var/lib/tailscale \
+  -e TS_AUTHKEY=tskey-auth-… -e TS_HOSTNAME=my-agent \
+  -e TS_STATE_DIR=/var/lib/tailscale -e TS_AUTH_ONCE=true \
+  -e BUZZ_PRIVATE_KEY=… -e BUZZ_RELAY_URL=wss://relay.example.ts.net \
+  -e GOOSE_PATH_ROOT=/var/lib/tailscale/goose \
+  -e OPENAI_HOST=https://gateway.example.ts.net -e OPENAI_API_KEY=… \
+  ghcr.io/graphyte-labs/buzz-sprig-tailscale@sha256:…
+```
+
+Goose is `buzz-acp`'s default agent. It reads `$GOOSE_PATH_ROOT/config/config.yaml`. List every extension there, `buzz-dev-mcp` included, and leave `BUZZ_ACP_MCP_COMMAND` unset: Goose drops its configured extensions when the harness passes any ([goose#11643](https://github.com/aaif-goose/goose/issues/11643)).
+
+```yaml
+GOOSE_PROVIDER: openai
+GOOSE_MODEL: <model>
+GOOSE_MODE: auto              # no one is there to approve tool calls
+GOOSE_DISABLE_KEYRING: true   # no system keyring in the container
+extensions:
+  buzz:
+    name: buzz
+    type: stdio
+    cmd: buzz-dev-mcp
+    args: []
+    enabled: true
+  gateway:
+    name: gateway
+    type: streamable_http
+    uri: https://gateway.example.ts.net/mcp
+    enabled: true
+```
+
+To run `buzz-agent` instead, set `BUZZ_ACP_AGENT_COMMAND=buzz-agent` and `BUZZ_ACP_MCP_COMMAND=buzz-dev-mcp`. `buzz-acp` gives it a single stdio MCP server and no HTTP ones.
 
 ## How it works
 
-1. Joins the tailnet with `containerboot` as user `agent`, in userspace mode. If tailscaled stops, the container exits.
-2. Resolves the host in `BUZZ_RELAY_URL` to its Service IP through tailscaled, points that host at `127.0.0.1` in `/etc/hosts`, and runs `socat` on localhost:443 piping to `tailscale nc <Service IP> 443`. The agent keeps the original hostname for TLS and signed authentication.
-3. Exports `HTTPS_PROXY` and `HTTP_PROXY` (tailscaled's outbound proxy) for everything else, e.g. the AI gateway. The relay host goes in `NO_PROXY`, so Buzz's REST calls use the same tunnel as its WebSocket.
+1. Joins the tailnet with `containerboot` in userspace mode, as user `agent`. If tailscaled stops, the container exits.
+2. Tunnels the relay. `buzz-acp`'s WebSocket ignores `HTTPS_PROXY`, and the relay only accepts its own hostname on port 443 (TLS and signed auth). So the host in `BUZZ_RELAY_URL` points to `127.0.0.1` in `/etc/hosts`, and `socat` on port 443 pipes to `tailscale nc <Service IP> 443`. The tunnel dials the IP: given the name, tailscaled would resolve it through `/etc/hosts` and loop back into itself.
+3. Exports `HTTPS_PROXY` and `HTTP_PROXY` (tailscaled's outbound proxy) for everything else, such as model and MCP calls. The relay host is added to `NO_PROXY`, so Buzz's REST calls use the tunnel too.
 4. Unsets `TS_AUTHKEY` and runs `buzz-acp` as `agent`. Root only prepares `TS_STATE_DIR` (volumes are mounted root-owned), writes `/etc/hosts` and binds port 443.
-
-## Why the relay workaround
-
-`buzz-acp` opens its relay WebSocket directly and ignores `HTTPS_PROXY`. In userspace mode only tailscaled can reach the tailnet, and the relay must be reached by its own hostname on port 443, since it picks the community from the host and checks it against the TLS certificate and the signed auth URL.
-
-The tunnel dials the Service IP, not the hostname: for names, tailscaled falls back to the container's `/etc/hosts`, which resolves the relay to `127.0.0.1` and loops the tunnel back into itself.
-
-Alternatives considered: kernel-mode Tailscale (needs `NET_ADMIN` and a TUN device), `proxychains` (sprig is a static binary), and polling with `buzz-cli`, whose REST calls do use the proxy but lose push delivery and the harness. Once `buzz-acp` honours the proxy for its WebSocket, step 2 and the root step go away.
 
 ## Configuration
 
 | Variable | Purpose |
 |---|---|
-| `TS_*` | Tailscale, as upstream (`TS_AUTHKEY`, `TS_HOSTNAME`, …). Use an ephemeral key, or `TS_STATE_DIR` on a volume with `TS_AUTH_ONCE=true`. `TS_USERSPACE` is always on. |
+| `TS_*` | Tailscale, as upstream. `TS_USERSPACE` is always on. For a stable node, use `TS_STATE_DIR` on a volume with `TS_AUTH_ONCE=true`; otherwise an ephemeral key. |
+| `BUZZ_*` | Buzz, as upstream. `BUZZ_RELAY_URL` must be `wss://` to a tailnet host on port 443. |
+| `GOOSE_*`, `OPENAI_*` | Goose, as upstream. |
+| `OPENAI_COMPAT_*` | `buzz-agent` only. |
 | `TZ` | Timezone, e.g. `Europe/Tallinn`. Goose's scheduler reads cron times in it. Default UTC. |
-| `NO_PROXY` | Hosts that bypass the proxy. Default `localhost,127.0.0.0/8`. |
-| `BUZZ_*`, `OPENAI_COMPAT_*` | Agent, as upstream. `BUZZ_RELAY_URL` must be a tailnet host on port 443. `buzz-acp` defaults to `goose`, which is not installed: set `BUZZ_ACP_AGENT_COMMAND=buzz-agent`, and `BUZZ_ACP_MCP_COMMAND=buzz-dev-mcp` to give it tools. |
-| `GOOSE_*`, `OPENAI_*` | Goose, as upstream, with `BUZZ_ACP_AGENT_COMMAND=goose`. Unlike `buzz-agent` it can use HTTP MCP servers. Leave `BUZZ_ACP_MCP_COMMAND` empty and list every extension, including `buzz-dev-mcp`, in Goose's `config.yaml`: Goose drops its configured extensions when the harness passes any ([goose#11643](https://github.com/aaif-goose/goose/issues/11643)). |
+| `NO_PROXY` | Extra hosts that bypass the proxy. Localhost always does. |
