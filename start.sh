@@ -26,19 +26,27 @@ done
 # point that hostname at localhost:443 and pipe it to the relay's Service IP with
 # `tailscale nc`. Dial the IP, not the name: tailscaled falls back to /etc/hosts
 # for names, which would send the tunnel back into itself.
-relay="${BUZZ_RELAY_URL:-}"; relay="${relay#*://}"; relay="${relay%%[:/]*}"
+# Only wss:// on the default port is tunnelled.
+url="${BUZZ_RELAY_URL:-}"
+case "$url" in
+  '' | wss://*) relay="${url#wss://}"; relay="${relay%%/*}" ;;
+  *) relay=: ;;
+esac
+case "$relay" in *:*)
+  printf 'BUZZ_RELAY_URL must be wss://host[/path] on port 443: %s\n' "$url" >&2; exit 1 ;;
+esac
 if [ -n "$relay" ]; then
   vip="$(su-exec agent $ts dns query --json "$relay" A | jq -er 'select(.ResponseCode == "RCodeSuccess") | [.Answers[]? | select(.Type == "TypeA") | .Body] | .[0] // empty')" || {
     printf 'failed to resolve Buzz relay Service IP: %s\n' "$relay" >&2
     exit 1
   }
-  grep -q " $relay\$" /etc/hosts || echo "127.0.0.1 $relay" >>/etc/hosts
+  grep -qxF "127.0.0.1 $relay" /etc/hosts || echo "127.0.0.1 $relay" >>/etc/hosts
   socat TCP-LISTEN:443,bind=127.0.0.1,reuseaddr,fork,su=agent EXEC:"$ts nc $vip 443" &
 fi
 
 # The relay goes direct (NO_PROXY), so its REST calls use the same tunnel.
 proxy="http://$TS_OUTBOUND_HTTP_PROXY_LISTEN"
-no_proxy="${NO_PROXY:-localhost,127.0.0.0/8}${relay:+,$relay}"
+no_proxy="localhost,127.0.0.0/8,::1${NO_PROXY:+,$NO_PROXY}${relay:+,$relay}"
 export HTTPS_PROXY="$proxy" HTTP_PROXY="$proxy" NO_PROXY="$no_proxy" \
   https_proxy="$proxy" http_proxy="$proxy" no_proxy="$no_proxy"
 
