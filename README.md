@@ -12,11 +12,11 @@ Contains `buzz-acp`, `buzz-agent`, `buzz-dev-mcp` and `buzz` from sprig, plus `g
 ## Running with Goose
 
 ```sh
-docker run -d -v agent:/var/lib/tailscale \
+docker run -d -v agent:/data \
   -e TS_AUTHKEY=tskey-auth-… -e TS_HOSTNAME=my-agent \
-  -e TS_STATE_DIR=/var/lib/tailscale -e TS_AUTH_ONCE=true \
+  -e TS_STATE_DIR=/data/tailscale -e TS_AUTH_ONCE=true \
   -e BUZZ_PRIVATE_KEY=… -e BUZZ_RELAY_URL=wss://relay.example.ts.net \
-  -e GOOSE_PATH_ROOT=/var/lib/tailscale/goose \
+  -e GOOSE_PATH_ROOT=/data/goose \
   -e OPENAI_HOST=https://gateway.example.ts.net -e OPENAI_API_KEY=… \
   ghcr.io/graphyte-labs/buzz-sprig-tailscale@sha256:…
 ```
@@ -46,16 +46,16 @@ To run `buzz-agent` instead, set `BUZZ_ACP_AGENT_COMMAND=buzz-agent` and `BUZZ_A
 
 ## How it works
 
-1. Joins the tailnet with `containerboot` in userspace mode, as user `agent`. If tailscaled stops, the container exits.
+1. Joins the tailnet with `containerboot` in userspace mode, as user `tsd`. The agent runs as `agent`, so it cannot read the node's state or auth key, or change the node through tailscaled's socket. If tailscaled stops, the container exits.
 2. Tunnels the relay. `buzz-acp`'s WebSocket ignores `HTTPS_PROXY`, and the relay only accepts its own hostname on port 443 (TLS and signed auth). So the host in `BUZZ_RELAY_URL` points to `127.0.0.1` in `/etc/hosts`, and `socat` on port 443 pipes to `tailscale nc <Service IP> 443`. The tunnel dials the IP: given the name, tailscaled would resolve it through `/etc/hosts` and loop back into itself.
 3. Exports `HTTPS_PROXY` and `HTTP_PROXY` (tailscaled's outbound proxy) for everything else, such as model and MCP calls. The relay host is added to `NO_PROXY`, so Buzz's REST calls use the tunnel too.
-4. Unsets `TS_AUTHKEY` and runs `buzz-acp` as `agent`. Root only prepares `TS_STATE_DIR` (volumes are mounted root-owned), writes `/etc/hosts` and binds port 443.
+4. Runs `buzz-acp` as `agent` under `tini`, which reaps processes the agent's shell leaves behind. Root only prepares `TS_STATE_DIR`, writes `/etc/hosts` and binds port 443.
 
 ## Configuration
 
 | Variable | Purpose |
 |---|---|
-| `TS_*` | Tailscale, as upstream. `TS_USERSPACE` is always on. For a stable node, use `TS_STATE_DIR` on a volume with `TS_AUTH_ONCE=true`; otherwise an ephemeral key. |
+| `TS_*` | Tailscale, as upstream. `TS_USERSPACE` is always on. For a stable node, use `TS_STATE_DIR` on a volume with `TS_AUTH_ONCE=true`; otherwise an ephemeral key. `TS_STATE_DIR` is handed to `tsd` entirely, so give it its own directory, not the volume root the agent writes to. |
 | `BUZZ_*` | Buzz, as upstream. `BUZZ_RELAY_URL` must be `wss://` to a tailnet host on port 443. |
 | `GOOSE_*`, `OPENAI_*` | Goose, as upstream. |
 | `OPENAI_COMPAT_*` | `buzz-agent` only. |

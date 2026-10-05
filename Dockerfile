@@ -13,9 +13,11 @@ ARG GOOSE_SHA256_AARCH64
 ARG TARGETARCH
 
 # bash: buzz-dev-mcp shell; git, curl: agent tooling; jq, socat, su-exec: start.sh;
-# tzdata: TZ, so scheduled jobs run in local time.
-RUN apk add --no-cache bash curl git jq socat su-exec tzdata \
-    && adduser -D -h /home/agent agent
+# tini: reaps the agent's orphaned processes; tzdata: TZ, for scheduled jobs.
+# Tailscale runs as tsd, so the agent cannot read its state or change the node.
+RUN apk add --no-cache bash curl git jq socat su-exec tini tzdata \
+    && adduser -D -h /home/agent agent \
+    && adduser -D -H -h /var/empty -s /sbin/nologin tsd
 
 # Goose, buzz-acp's default agent. Unlike buzz-agent it can use HTTP MCP servers.
 # The workflow verifies the release's build attestation and passes the checksums.
