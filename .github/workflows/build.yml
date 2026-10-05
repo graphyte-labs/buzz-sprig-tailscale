@@ -1,7 +1,8 @@
 name: build
 
-# Block's buzz-sprig on our tailscale image. Builds on push and on demand, and
-# daily when Block's main or our tailscale:latest has moved.
+# Block's buzz-sprig and Goose on our tailscale image. Builds on push and on
+# demand, and daily when Block's main, our tailscale:latest or Goose's latest
+# release has moved. Publishes only from master.
 on:
   push:
     branches: [master]
@@ -25,10 +26,11 @@ permissions:
   packages: write
 
 concurrency:
-  group: build-${{ github.event_name }}
+  group: build
 
 jobs:
   build:
+    if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     env:
       IMAGE: ghcr.io/${{ github.repository }}
@@ -53,13 +55,15 @@ jobs:
             docker buildx imagetools inspect "$1" --format '{{json .Image}}' \
               | jq -er --arg k "$2" '."linux/amd64".config.Labels[$k]'
           }
-          sprig="${SPRIG:-sha-$(label ghcr.io/block/buzz-sprig:main org.opencontainers.image.revision | cut -c1-7)}"
-          tailscale="${TAILSCALE:-$(label "ghcr.io/$OWNER/tailscale:latest" org.opencontainers.image.version)}"
-          goose="${GOOSE:-$(gh release view -R aaif-goose/goose --json tagName -q .tagName)}"
+          d_sprig="sha-$(label ghcr.io/block/buzz-sprig:main org.opencontainers.image.revision | cut -c1-7)"
+          d_tailscale="$(label "ghcr.io/$OWNER/tailscale:latest" org.opencontainers.image.version)"
+          d_goose="$(gh release view -R aaif-goose/goose --json tagName -q .tagName)"
+          sprig="${SPRIG:-$d_sprig}" tailscale="${TAILSCALE:-$d_tailscale}" goose="${GOOSE:-$d_goose}"
           [[ "$sprig" =~ ^sha-[0-9a-f]{7}$ && "$tailscale" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ && "$goose" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
           base="ghcr.io/$OWNER/tailscale:$tailscale"
           tags="$IMAGE:$sprig"
-          [ -z "$SPRIG$TAILSCALE$GOOSE" ] && tags="$tags,$IMAGE:latest"
+          # latest only when every version is the current default, however it was given.
+          [ "$sprig $tailscale $goose" = "$d_sprig $d_tailscale $d_goose" ] && tags="$tags,$IMAGE:latest"
           # The tag only carries the sprig version; the tailscale base, Goose and
           # this repo's commit are recorded in labels, so any of them changing rebuilds.
           build=true
@@ -72,6 +76,21 @@ jobs:
           fi
           { echo "sprig=$sprig"; echo "tailscale=$tailscale"; echo "goose=$goose"; echo "base=$base"
             echo "tags=$tags"; echo "build=$build"; } >>"$GITHUB_OUTPUT"
+
+      - name: Verify Goose
+        id: goose
+        if: steps.v.outputs.build == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GOOSE: ${{ steps.v.outputs.goose }}
+        run: |
+          set -euo pipefail
+          for arch in x86_64 aarch64; do
+            f="goose-$arch-unknown-linux-musl.tar.gz"
+            gh release download "$GOOSE" -R aaif-goose/goose -p "$f" -D "$RUNNER_TEMP"
+            gh attestation verify "$RUNNER_TEMP/$f" -R aaif-goose/goose >/dev/null
+            echo "$arch=$(sha256sum "$RUNNER_TEMP/$f" | cut -d' ' -f1)" >>"$GITHUB_OUTPUT"
+          done
 
       - if: steps.v.outputs.build == 'true'
         uses: docker/setup-qemu-action@v3
@@ -86,6 +105,8 @@ jobs:
             SPRIG_VERSION=${{ steps.v.outputs.sprig }}
             TAILSCALE_VERSION=${{ steps.v.outputs.tailscale }}
             GOOSE_VERSION=${{ steps.v.outputs.goose }}
+            GOOSE_SHA256_X86_64=${{ steps.goose.outputs.x86_64 }}
+            GOOSE_SHA256_AARCH64=${{ steps.goose.outputs.aarch64 }}
           tags: ${{ steps.v.outputs.tags }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
