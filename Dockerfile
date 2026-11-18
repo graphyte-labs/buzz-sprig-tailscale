@@ -6,6 +6,15 @@ ARG SPRIG_VERSION
 ARG TAILSCALE_VERSION
 FROM ghcr.io/block/buzz-sprig:${SPRIG_VERSION} AS sprig
 
+# Cross-compiled on the build host: no emulation for the arm64 image.
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS proxy
+ARG TARGETOS TARGETARCH
+WORKDIR /src
+COPY go.mod ./
+COPY cmd ./cmd
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+    go build -trimpath -ldflags="-s -w" -o /mcp-legacy-proxy ./cmd/mcp-legacy-proxy
+
 FROM ghcr.io/graphyte-labs/tailscale:${TAILSCALE_VERSION}
 ARG GOOSE_VERSION
 ARG GOOSE_SHA256_X86_64
@@ -33,6 +42,7 @@ RUN case "$TARGETARCH" in \
     && apk add --no-cache --virtual .strip binutils && strip /usr/local/bin/goose && apk del .strip
 
 COPY --link --from=sprig /usr/local/bin/ /usr/local/bin/
+COPY --link --from=proxy /mcp-legacy-proxy /usr/local/bin/mcp-legacy-proxy
 COPY --link --chmod=0755 start.sh /usr/local/bin/buzz-sprig-start
 
 # NO_COLOR: keep ANSI codes out of the JSON log lines.

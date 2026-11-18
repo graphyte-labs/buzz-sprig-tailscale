@@ -53,6 +53,13 @@ no_proxy="localhost,127.0.0.0/8,::1${NO_PROXY:+,$NO_PROXY}${relay:+,$relay}"
 export HTTPS_PROXY="$proxy" HTTP_PROXY="$proxy" NO_PROXY="$no_proxy" \
   https_proxy="$proxy" http_proxy="$proxy" no_proxy="$no_proxy"
 
+# Optional: keep Goose on the MCP initialize handshake for a server that only
+# accepts it (see cmd/mcp-legacy-proxy). Point the Goose extension at
+# http://127.0.0.1:8765/<path> instead of the server.
+if [ -n "${MCP_LEGACY_PROXY_UPSTREAM:-}" ]; then
+  su-exec agent mcp-legacy-proxy &
+fi
+
 # Only containerboot needs the auth key (its environment is tsd's, not readable
 # by agent). tini runs buzz-acp under a subreaper, so the agent's orphaned
 # processes are reaped.

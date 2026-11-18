@@ -49,7 +49,14 @@ To run `buzz-agent` instead, set `BUZZ_ACP_AGENT_COMMAND=buzz-agent` and `BUZZ_A
 1. Joins the tailnet with `containerboot` in userspace mode, as user `tsd`. The agent runs as `agent`, so it cannot read the node's state or auth key, or change the node through tailscaled's socket. If tailscaled stops, the container exits.
 2. Tunnels the relay. `buzz-acp`'s WebSocket ignores `HTTPS_PROXY`, and the relay only accepts its own hostname on port 443 (TLS and signed auth). So the host in `BUZZ_RELAY_URL` points to `127.0.0.1` in `/etc/hosts`, and `socat` on port 443 pipes to `tailscale nc <Service IP> 443`. The tunnel dials the IP: given the name, tailscaled would resolve it through `/etc/hosts` and loop back into itself.
 3. Exports `HTTPS_PROXY` and `HTTP_PROXY` (tailscaled's outbound proxy) for everything else, such as model and MCP calls. The relay host is added to `NO_PROXY`, so Buzz's REST calls use the tunnel too.
-4. Runs `buzz-acp` as `agent` under `tini`, which reaps processes the agent's shell leaves behind. Root only prepares `TS_STATE_DIR`, writes `/etc/hosts` and binds port 443.
+4. With `MCP_LEGACY_PROXY_UPSTREAM` set, starts `mcp-legacy-proxy` (below).
+5. Runs `buzz-acp` as `agent` under `tini`, which reaps processes the agent's shell leaves behind. Root only prepares `TS_STATE_DIR`, writes `/etc/hosts` and binds port 443.
+
+## MCP servers that only accept `initialize`
+
+Goose opens an HTTP MCP connection with `server/discover`. If the server answers it but lists only versions before `2026-07-28`, Goose picks one of those yet still sends session-less requests with per-request `_meta`. A server that only accepts those versions inside an `initialize` session answers every request with JSON-RPC `-32022` ("protocol version … is not supported"). Goose's extension config has no setting for this.
+
+`mcp-legacy-proxy` works around it. It listens on `127.0.0.1:8765` (`MCP_LEGACY_PROXY_LISTEN`), answers every `server/discover` with HTTP 404 and `-32601`, and forwards everything else to `MCP_LEGACY_PROXY_UPSTREAM` through `HTTPS_PROXY`. Goose then falls back to `initialize`. Point the extension's `uri` at the proxy, keeping the server's path, e.g. `http://127.0.0.1:8765/v1/mcp`.
 
 ## Configuration
 
@@ -61,3 +68,5 @@ To run `buzz-agent` instead, set `BUZZ_ACP_AGENT_COMMAND=buzz-agent` and `BUZZ_A
 | `OPENAI_COMPAT_*` | `buzz-agent` only. |
 | `TZ` | Timezone, e.g. `Europe/Tallinn`. Goose's scheduler reads cron times in it. Default UTC. |
 | `NO_PROXY` | Extra hosts that bypass the proxy. Localhost always does. |
+| `MCP_LEGACY_PROXY_UPSTREAM` | `https://` origin of an MCP server that only accepts `initialize`, e.g. `https://gateway.example.ts.net`. Unset: the proxy does not run. |
+| `MCP_LEGACY_PROXY_LISTEN` | Address of that proxy. Default `127.0.0.1:8765`. |
